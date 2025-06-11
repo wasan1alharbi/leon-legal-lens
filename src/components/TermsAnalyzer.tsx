@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -108,7 +107,22 @@ ${text}
         throw new Error('No response from OpenAI');
       }
 
-      return JSON.parse(content);
+      const result = JSON.parse(content);
+      
+      // Adjust score based on number of issues found
+      const issueCount = result.phrases?.length || 0;
+      let adjustedScore = result.score;
+      
+      if (issueCount >= 5) {
+        adjustedScore = Math.min(100, adjustedScore + 10);
+      } else if (issueCount <= 2) {
+        adjustedScore = Math.max(0, adjustedScore - 15);
+      }
+      
+      return {
+        ...result,
+        score: adjustedScore
+      };
     } catch (error) {
       console.error('GPT Analysis failed:', error);
       throw error;
@@ -201,17 +215,20 @@ ${text}
             payments: [] as string[]
           };
 
+          // Parse GPT phrases into categories
           gptResult.phrases.forEach(phrase => {
+            const item = `"${phrase.text}" - ${phrase.reason}`;
+            
             switch (phrase.category) {
               case 'Data Privacy':
-                categories.givingUp.push(phrase.reason);
+                categories.givingUp.push(item);
                 break;
               case 'Legal Rights':
               case 'User Control':
-                categories.risks.push(phrase.reason);
+                categories.risks.push(item);
                 break;
               case 'Refunds & Payments':
-                categories.payments.push(phrase.reason);
+                categories.payments.push(item);
                 break;
             }
           });
@@ -390,7 +407,9 @@ ${text}
                         <span className="text-sm text-gray-500 cursor-help">ℹ️</span>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>{analysis?.reasoning || 'Score based on detected risk patterns'}</p>
+                        <p className="max-w-xs">
+                          {analysis?.reasoning || 'Score based on detected risk patterns'}
+                        </p>
                       </TooltipContent>
                     </Tooltip>
                   </CardTitle>
@@ -409,7 +428,7 @@ ${text}
               </Card>
 
               {/* GPT Risk Analysis */}
-              {analysis?.gptAnalysis && (
+              {analysis?.gptAnalysis && analysis.gptAnalysis.phrases.length > 0 && (
                 <Card className="bg-white shadow-lg border-2 border-red-100">
                   <CardHeader>
                     <CardTitle className="text-xl text-gray-800 flex items-center gap-2">
@@ -438,6 +457,20 @@ ${text}
                 </Card>
               )}
 
+              {/* No Major Risks Found */}
+              {analysis?.gptAnalysis && analysis.gptAnalysis.phrases.length === 0 && (
+                <Card className="bg-white shadow-lg border-2 border-green-200">
+                  <CardContent className="text-center py-8">
+                    <h3 className="text-xl font-semibold text-gray-800 mb-2">
+                      No major risks found! Looks good 😇
+                    </h3>
+                    <p className="text-gray-600">
+                      This document appears to have standard, reasonable terms.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Category Cards */}
               <div className="grid md:grid-cols-3 gap-6">
                 <Card className="bg-white shadow-lg border-2 border-pastel-pink/30 hover:shadow-xl transition-shadow">
@@ -452,7 +485,7 @@ ${text}
                         {analysis.categories.givingUp.map((item, index) => (
                           <li key={index} className="text-gray-700 flex items-start gap-2">
                             <span className="text-orange-500 mt-1">•</span>
-                            {item}
+                            <span className="text-sm">{item}</span>
                           </li>
                         ))}
                       </ul>
@@ -474,7 +507,7 @@ ${text}
                         {analysis.categories.risks.map((item, index) => (
                           <li key={index} className="text-gray-700 flex items-start gap-2">
                             <span className="text-red-500 mt-1">•</span>
-                            {item}
+                            <span className="text-sm">{item}</span>
                           </li>
                         ))}
                       </ul>
@@ -496,7 +529,7 @@ ${text}
                         {analysis.categories.payments.map((item, index) => (
                           <li key={index} className="text-gray-700 flex items-start gap-2">
                             <span className="text-blue-500 mt-1">•</span>
-                            {item}
+                            <span className="text-sm">{item}</span>
                           </li>
                         ))}
                       </ul>
@@ -551,8 +584,10 @@ ${text}
               <LeonMascot 
                 message={
                   analysis?.gptAnalysis
-                    ? (analysis.shadinessScore <= 30 
+                    ? (analysis.gptAnalysis.phrases.length === 0
                         ? "GPT says these folks seem pretty trustworthy! 😌"
+                        : analysis.shadinessScore <= 30 
+                        ? "GPT found some minor things, but overall looks good! 😌"
                         : analysis.shadinessScore <= 70
                         ? "GPT found some things to watch out for 🤔"
                         : "Whoa, GPT thinks these terms are quite risky! 😬")
@@ -573,3 +608,5 @@ ${text}
 };
 
 export default TermsAnalyzer;
+
+</edits_to_apply>
