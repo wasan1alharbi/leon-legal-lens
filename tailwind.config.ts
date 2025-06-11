@@ -1,3 +1,4 @@
+
 import type { Config } from "tailwindcss";
 
 export default {
@@ -18,6 +19,9 @@ export default {
 			}
 		},
 		extend: {
+			fontFamily: {
+				'sans': ['Nunito', 'sans-serif'],
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
@@ -61,7 +65,12 @@ export default {
 					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
-				}
+				},
+				// Click Agree custom colors
+				'pastel-blue': '#BDE0FE',
+				'pastel-pink': '#FFC8DD',
+				'pastel-green': '#E2F0CB',
+				'cream': '#FDFDFD',
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
@@ -84,11 +93,51 @@ export default {
 					to: {
 						height: '0'
 					}
-				}
+				},
+				'bounce-gentle': {
+					'0%, 100%': {
+						transform: 'translateY(0)',
+					},
+					'50%': {
+						transform: 'translateY(-4px)',
+					},
+				},
+				'slide-in-up': {
+					'0%': {
+						opacity: '0',
+						transform: 'translateY(20px)',
+					},
+					'100%': {
+						opacity: '1',
+						transform: 'translateY(0)',
+					},
+				},
+				'progress-fill': {
+					'0%': {
+						width: '0%',
+					},
+					'100%': {
+						width: 'var(--progress-width)',
+					},
+				},
+				'sparkle': {
+					'0%, 100%': {
+						opacity: '0',
+						transform: 'scale(0.8)',
+					},
+					'50%': {
+						opacity: '1',
+						transform: 'scale(1.2)',
+					},
+				},
 			},
 			animation: {
 				'accordion-down': 'accordion-down 0.2s ease-out',
-				'accordion-up': 'accordion-up 0.2s ease-out'
+				'accordion-up': 'accordion-up 0.2s ease-out',
+				'bounce-gentle': 'bounce-gentle 0.6s ease-in-out infinite',
+				'slide-in-up': 'slide-in-up 0.5s ease-out',
+				'progress-fill': 'progress-fill 1.5s ease-out',
+				'sparkle': 'sparkle 0.8s ease-in-out',
 			}
 		}
 	},
