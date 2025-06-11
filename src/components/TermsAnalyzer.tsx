@@ -6,10 +6,12 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { useToast } from '@/hooks/use-toast';
 import LeonMascot from './LeonMascot';
 
 interface GPTAnalysisResult {
   score: number;
+  reasoning: string;
   phrases: {
     text: string;
     reason: string;
@@ -20,6 +22,7 @@ interface GPTAnalysisResult {
 
 interface AnalysisResult {
   shadinessScore: number;
+  reasoning: string;
   categories: {
     givingUp: string[];
     risks: string[];
@@ -35,24 +38,77 @@ const TermsAnalyzer = () => {
   const [showResults, setShowResults] = useState(false);
   const [highlightRisky, setHighlightRisky] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const { toast } = useToast();
 
-  const analyzeWithGPT = async (text: string): Promise<GPTAnalysisResult> => {
+  const analyzeWithGPT = async (text: string, openaiApiKey: string): Promise<GPTAnalysisResult> => {
+    const prompt = `You're a legal-simplifying assistant.
+Analyze the following Terms & Conditions and return:
+
+1. A Shadiness Score (0–100)
+2. A short reasoning behind the score
+3. A list of 3–7 concerning phrases, with:
+   - Exact text
+   - Short explanation
+   - Category (choose from: Data Privacy, Legal Rights, Refunds & Payments, User Control)
+4. A simplified bullet-point summary of what the user is agreeing to
+
+Return your answer in this JSON format:
+{
+  "score": 80,
+  "reasoning": "Strict refund policy, mandatory arbitration, and vague data-sharing terms.",
+  "phrases": [
+    {
+      "text": "All sales are final.",
+      "reason": "No refund policy",
+      "category": "Refunds & Payments"
+    }
+  ],
+  "summary": [
+    "You give up refund rights",
+    "You allow third-party data sharing",
+    "You waive your right to sue"
+  ]
+}
+
+Here are the Terms:
+---
+${text}
+---`;
+
     try {
-      const response = await fetch('/api/analyze-terms', {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${openaiApiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ terms: text }),
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 700,
+          temperature: 0.3,
+        }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to analyze terms');
+        throw new Error(`OpenAI API error: ${response.statusText}`);
       }
 
-      const result = await response.json();
-      return result;
+      const data = await response.json();
+      const content = data.choices[0]?.message?.content;
+      
+      if (!content) {
+        throw new Error('No response from OpenAI');
+      }
+
+      return JSON.parse(content);
     } catch (error) {
       console.error('GPT Analysis failed:', error);
       throw error;
@@ -63,103 +119,146 @@ const TermsAnalyzer = () => {
     const lowerText = text.toLowerCase();
     
     const riskPatterns = [
-      { pattern: /we may collect|we collect|data collection/g, risk: 'high' },
-      { pattern: /third.party|third party|share.*information/g, risk: 'high' },
-      { pattern: /cookies|tracking|analytics/g, risk: 'medium' },
-      { pattern: /you agree|binding arbitration|waive.*rights/g, risk: 'high' },
-      { pattern: /no refund|non.refundable|final sale/g, risk: 'medium' },
-      { pattern: /terminate.*account|suspend.*service/g, risk: 'medium' },
-      { pattern: /modify.*terms|change.*agreement/g, risk: 'low' },
-      { pattern: /liability.*limited|not responsible/g, risk: 'high' },
-      { pattern: /indemnify|hold.*harmless/g, risk: 'high' },
+      { pattern: /we may collect|we collect|collect.*data|personal information/gi, category: 'Data Privacy', severity: 'high' },
+      { pattern: /third.?party|share.*information|share.*data/gi, category: 'Data Privacy', severity: 'high' },
+      { pattern: /cookies|tracking|analytics/gi, category: 'Data Privacy', severity: 'medium' },
+      { pattern: /binding arbitration|waive.*rights|you agree/gi, category: 'Legal Rights', severity: 'high' },
+      { pattern: /no refund|non.?refundable|final sale|all sales.*final/gi, category: 'Refunds & Payments', severity: 'high' },
+      { pattern: /terminate.*account|suspend.*service/gi, category: 'Legal Rights', severity: 'medium' },
+      { pattern: /modify.*terms|change.*agreement/gi, category: 'User Control', severity: 'low' },
+      { pattern: /liability.*limited|not responsible|as is/gi, category: 'Legal Rights', severity: 'high' },
     ];
 
     let shadinessScore = 0;
-    const riskyPhrases: string[] = [];
+    const foundIssues: { text: string; category: string; severity: string }[] = [];
     const categories = {
       givingUp: [] as string[],
       risks: [] as string[],
       payments: [] as string[]
     };
 
-    riskPatterns.forEach(({ pattern, risk }) => {
+    riskPatterns.forEach(({ pattern, category, severity }) => {
       const matches = text.match(pattern);
       if (matches) {
-        matches.forEach(match => riskyPhrases.push(match));
-        
-        const riskValue = risk === 'high' ? 25 : risk === 'medium' ? 15 : 10;
-        shadinessScore += riskValue * matches.length;
+        // Deduplicate matches
+        const uniqueMatches = [...new Set(matches)];
+        uniqueMatches.forEach(match => {
+          foundIssues.push({ text: match, category, severity });
+          
+          const riskValue = severity === 'high' ? 25 : severity === 'medium' ? 15 : 10;
+          shadinessScore += riskValue;
 
-        if (pattern.source.includes('collect|share|cookies|tracking')) {
-          categories.givingUp.push(`Your ${matches[0].includes('data') ? 'personal data' : 'browsing activity'} may be collected`);
-        } else if (pattern.source.includes('refund|payment|final')) {
-          categories.payments.push(`${matches[0].includes('refund') ? 'Refunds may be restricted' : 'Payment terms apply'}`);
-        } else {
-          categories.risks.push(`You may ${matches[0].includes('agree') ? 'waive certain rights' : 'face account restrictions'}`);
-        }
+          if (category === 'Data Privacy') {
+            categories.givingUp.push(`Your ${match.toLowerCase().includes('data') ? 'personal data' : 'information'} may be collected or shared`);
+          } else if (category === 'Refunds & Payments') {
+            categories.payments.push(`${match.toLowerCase().includes('refund') ? 'Limited or no refunds' : 'Restrictive payment terms'}`);
+          } else {
+            categories.risks.push(`You may ${match.toLowerCase().includes('agree') ? 'waive certain legal rights' : 'face account limitations'}`);
+          }
+        });
       }
     });
+
+    // Deduplicate categories
+    categories.givingUp = [...new Set(categories.givingUp)];
+    categories.risks = [...new Set(categories.risks)];
+    categories.payments = [...new Set(categories.payments)];
 
     shadinessScore = Math.min(100, shadinessScore);
 
     return {
       shadinessScore,
+      reasoning: foundIssues.length > 0 ? `Found ${foundIssues.length} concerning phrases across ${new Set(foundIssues.map(i => i.category)).size} categories` : 'No major issues detected',
       categories,
-      riskyPhrases
+      riskyPhrases: foundIssues.map(i => i.text)
     };
   };
 
   const handleAnalyze = async () => {
-    if (!termsText.trim()) return;
-    
-    setIsAnalyzing(true);
-    setError(null);
-    
-    try {
-      // Try GPT analysis first
-      const gptResult = await analyzeWithGPT(termsText);
-      
-      // Convert GPT result to our format
-      const categories = {
-        givingUp: [] as string[],
-        risks: [] as string[],
-        payments: [] as string[]
-      };
-
-      gptResult.phrases.forEach(phrase => {
-        switch (phrase.category) {
-          case 'Data Privacy':
-            categories.givingUp.push(phrase.reason);
-            break;
-          case 'Legal Rights':
-            categories.risks.push(phrase.reason);
-            break;
-          case 'Refunds & Payments':
-            categories.payments.push(phrase.reason);
-            break;
-          default:
-            categories.risks.push(phrase.reason);
-        }
+    if (!termsText.trim()) {
+      toast({
+        title: "No text to analyze",
+        description: "Please paste some Terms & Conditions first!",
+        variant: "destructive"
       });
-
-      const result: AnalysisResult = {
-        shadinessScore: gptResult.score,
-        categories,
-        riskyPhrases: gptResult.phrases.map(p => p.text),
-        gptAnalysis: gptResult
-      };
-
-      setAnalysis(result);
-    } catch (error) {
-      console.error('GPT analysis failed, using fallback:', error);
-      // Fall back to rule-based analysis
-      const fallbackResult = fallbackAnalyze(termsText);
-      setAnalysis(fallbackResult);
-      setError('Using basic analysis (GPT unavailable)');
+      return;
     }
     
-    setIsAnalyzing(false);
-    setShowResults(true);
+    setIsAnalyzing(true);
+    
+    try {
+      let result: AnalysisResult;
+
+      if (apiKey.trim()) {
+        // Try GPT analysis
+        try {
+          const gptResult = await analyzeWithGPT(termsText, apiKey);
+          
+          // Convert GPT result to our format
+          const categories = {
+            givingUp: [] as string[],
+            risks: [] as string[],
+            payments: [] as string[]
+          };
+
+          gptResult.phrases.forEach(phrase => {
+            switch (phrase.category) {
+              case 'Data Privacy':
+                categories.givingUp.push(phrase.reason);
+                break;
+              case 'Legal Rights':
+              case 'User Control':
+                categories.risks.push(phrase.reason);
+                break;
+              case 'Refunds & Payments':
+                categories.payments.push(phrase.reason);
+                break;
+            }
+          });
+
+          result = {
+            shadinessScore: gptResult.score,
+            reasoning: gptResult.reasoning,
+            categories,
+            riskyPhrases: gptResult.phrases.map(p => p.text),
+            gptAnalysis: gptResult
+          };
+
+          toast({
+            title: "Analysis complete!",
+            description: "GPT has analyzed your terms successfully."
+          });
+        } catch (gptError) {
+          console.error('GPT analysis failed, using fallback:', gptError);
+          result = fallbackAnalyze(termsText);
+          toast({
+            title: "Using basic analysis",
+            description: "GPT analysis failed, showing rule-based results instead.",
+            variant: "destructive"
+          });
+        }
+      } else {
+        // Use fallback analysis
+        result = fallbackAnalyze(termsText);
+        setShowApiKeyInput(true);
+        toast({
+          title: "Basic analysis complete",
+          description: "Add your OpenAI API key for more accurate GPT-powered analysis!"
+        });
+      }
+
+      setAnalysis(result);
+      setShowResults(true);
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      toast({
+        title: "Analysis failed",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const getShadinessEmoji = (score: number) => {
@@ -231,11 +330,23 @@ const TermsAnalyzer = () => {
                     placeholder="Copy and paste the Terms & Conditions you want me to analyze..."
                     className="min-h-[300px] text-base border-2 border-pastel-blue/50 focus:border-primary transition-colors resize-none"
                   />
-                  {error && (
-                    <p className="mt-2 text-sm text-yellow-600 bg-yellow-50 p-2 rounded">
-                      {error}
-                    </p>
+                  
+                  {showApiKeyInput && (
+                    <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                      <h3 className="font-semibold text-gray-800 mb-2">🔑 Optional: Add OpenAI API Key for GPT Analysis</h3>
+                      <input
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder="sk-..."
+                        className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                      />
+                      <p className="text-xs text-gray-600 mt-1">
+                        Your API key is used only for this analysis and is not stored.
+                      </p>
+                    </div>
                   )}
+
                   <div className="mt-6 text-center">
                     <Button
                       onClick={handleAnalyze}
@@ -251,7 +362,7 @@ const TermsAnalyzer = () => {
                       {isAnalyzing ? (
                         <>
                           <div className="animate-spin h-5 w-5 mr-3 border-2 border-white border-t-transparent rounded-full"></div>
-                          Analyzing with AI...
+                          {apiKey ? 'Analyzing with GPT...' : 'Analyzing...'}
                         </>
                       ) : (
                         'Check it for me pls 🐤'
@@ -262,7 +373,7 @@ const TermsAnalyzer = () => {
               </Card>
 
               <LeonMascot 
-                message={isAnalyzing ? "Sending this to my AI friend... 🤖" : "Ready to dive into some legal text! 🦆"} 
+                message={isAnalyzing ? (apiKey ? "Sending this to GPT... 🤖" : "Analyzing with my basic rules... 🤓") : "Ready to dive into some legal text! 🦆"} 
                 isAnalyzing={isAnalyzing}
               />
             </div>
@@ -279,7 +390,7 @@ const TermsAnalyzer = () => {
                         <span className="text-sm text-gray-500 cursor-help">ℹ️</span>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>Score based on AI analysis of your pasted terms</p>
+                        <p>{analysis?.reasoning || 'Score based on detected risk patterns'}</p>
                       </TooltipContent>
                     </Tooltip>
                   </CardTitle>
@@ -302,7 +413,7 @@ const TermsAnalyzer = () => {
                 <Card className="bg-white shadow-lg border-2 border-red-100">
                   <CardHeader>
                     <CardTitle className="text-xl text-gray-800 flex items-center gap-2">
-                      ⚠️ Key Risks Found
+                      ⚠️ Key Risks Found by GPT
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -428,7 +539,7 @@ const TermsAnalyzer = () => {
                     setTermsText('');
                     setAnalysis(null);
                     setHighlightRisky(false);
-                    setError(null);
+                    setShowApiKeyInput(false);
                   }}
                   variant="outline"
                   className="px-6 py-3 border-2 border-primary text-primary hover:bg-primary hover:text-white transition-all"
@@ -441,15 +552,15 @@ const TermsAnalyzer = () => {
                 message={
                   analysis?.gptAnalysis
                     ? (analysis.shadinessScore <= 30 
-                        ? "AI says these folks seem pretty trustworthy! 😌"
+                        ? "GPT says these folks seem pretty trustworthy! 😌"
                         : analysis.shadinessScore <= 70
-                        ? "AI found some things to watch out for 🤔"
-                        : "Whoa, AI thinks these terms are quite risky! 😬")
+                        ? "GPT found some things to watch out for 🤔"
+                        : "Whoa, GPT thinks these terms are quite risky! 😬")
                     : (analysis?.shadinessScore || 0) <= 30 
-                    ? "All clear! These folks seem chill 😌"
+                    ? "My basic analysis says these folks seem chill 😌"
                     : (analysis?.shadinessScore || 0) <= 70
-                    ? "Hmm, some things to watch out for 🤔"
-                    : "Whoa, these terms are kinda sus 😬"
+                    ? "Hmm, I found some things to watch out for 🤔"
+                    : "Whoa, these terms look kinda sus to me 😬"
                 } 
                 isAnalyzing={false}
               />
