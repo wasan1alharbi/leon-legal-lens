@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -58,11 +57,11 @@ const TermsAnalyzer = () => {
 
         // Categorize findings
         if (pattern.source.includes('collect|share|cookies|tracking')) {
-          categories.givingUp.push(`Your ${match.includes('data') ? 'personal data' : 'browsing activity'} may be collected`);
+          categories.givingUp.push(`Your ${matches[0].includes('data') ? 'personal data' : 'browsing activity'} may be collected`);
         } else if (pattern.source.includes('refund|payment|final')) {
-          categories.payments.push(`${match.includes('refund') ? 'Refunds may be restricted' : 'Payment terms apply'}`);
+          categories.payments.push(`${matches[0].includes('refund') ? 'Refunds may be restricted' : 'Payment terms apply'}`);
         } else {
-          categories.risks.push(`You may ${match.includes('agree') ? 'waive certain rights' : 'face account restrictions'}`);
+          categories.risks.push(`You may ${matches[0].includes('agree') ? 'waive certain rights' : 'face account restrictions'}`);
         }
       }
     });
